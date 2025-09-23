@@ -17,14 +17,13 @@ uv run python to_charts.py
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import os
 import sys
 
 
 # 可配置常量
-INPUT_DIR = Path('./xlsx/')
+INPUT_DIR = Path('./overflow')
 OUTPUT_DIR = Path('./charts/')
 FIGURE_SIZE = (12, 8)
 DPI = 300
@@ -33,34 +32,42 @@ X_LABEL = '数据点索引'
 # 图表配置
 CHART_CONFIG = [
     {
-        'type': '立压',
-        'columns': ['立压log(MPa)'],
-        'title': '立压 (log(MPa))',
-        'ylabel': 'log(MPa)'
-    },
-    {
-        'type': '泵冲',
-        'columns': ['泵冲1(spm)', '泵冲2(spm)', '泵冲3(spm)'],
-        'title': '泵冲 (spm)',
-        'ylabel': 'spm'
-    },
-    {
-        'type': '钻头深度',
-        'columns': ['钻头深度(m)'],
-        'title': '钻头深度 (m)',
-        'ylabel': 'm'
-    },
-    {
-        'type': '转盘转速',
-        'columns': ['转盘转速(rpm)'],
-        'title': '转盘转速 (rpm)',
-        'ylabel': 'rpm'
-    },
-    {
-        'type': '大钩负荷',
-        'columns': ['大钩负荷(KN)'],
-        'title': '大钩负荷 (KN)',
-        'ylabel': 'KN'
+        'type': '综合指标',
+        'is_multi_axis': True,
+        'axes_groups': [
+            {
+                'columns': ['立压log(MPa)'],
+                'ylabel': '立压 log(MPa)',
+                'color': 'blue',
+                'axis': 'left'
+            },
+            {
+                'columns': ['泵冲1(spm)', '泵冲2(spm)', '泵冲3(spm)'],
+                'ylabel': '泵冲 (spm)',
+                'color': 'red',
+                'axis': 'right1'
+            },
+            {
+                'columns': ['钻头深度(m)'],
+                'ylabel': '钻头深度 (m)',
+                'color': 'green',
+                'axis': 'right2'
+            },
+            {
+                'columns': ['入口流量(L/s)'],
+                'ylabel': '入口流量 (L/s)',
+                'color': 'brown',
+                'axis': 'right5'
+            },
+            {
+                'columns': ['FDT101(L/s)'],
+                'ylabel': '出口流量 (L/s)',
+                'color': 'pink',
+                'axis': 'right6'
+            }
+        ],
+        'title': '综合钻井指标监控',
+        'ylabel': '多项指标'
     }
 ]
 
@@ -113,6 +120,10 @@ def generate_chart(df, config, table_name):
     """生成单个图表"""
     fig = None
     try:
+        # 检查是否为多轴图表
+        if config.get('is_multi_axis', False):
+            return generate_multi_axis_chart(df, config, table_name)
+        
         # 检查所需的列是否存在
         missing_columns = [col for col in config['columns'] if col not in df.columns]
         if missing_columns:
@@ -159,6 +170,98 @@ def generate_chart(df, config, table_name):
             plt.close('all')  # 关闭所有打开的图形作为备选
 
 
+def generate_multi_axis_chart(df, config, table_name):
+    """生成多轴综合图表"""
+    fig = None
+    try:
+        # 检查所有需要的列
+        all_columns = []
+        for group in config['axes_groups']:
+            all_columns.extend(group['columns'])
+        
+        missing_columns = [col for col in all_columns if col not in df.columns]
+        if missing_columns:
+            print(f"警告: 文件 {table_name} 缺少列 {missing_columns}，跳过综合图表")
+            return None
+
+        # 创建图表
+        fig, ax1 = plt.subplots(figsize=(16, 10), dpi=DPI)
+        
+        axes = {'left': ax1}
+        colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+        color_index = 0
+        
+        # 为每个轴组创建轴并绘制数据
+        for i, group in enumerate(config['axes_groups']):
+            if group['axis'] == 'left':
+                ax = ax1
+            else:
+                # 创建新的右侧轴
+                ax = ax1.twinx()
+                # 调整右侧轴的位置，避免重叠
+                if 'right' in group['axis'] and len(group['axis']) > 5:
+                    spine_offset = 60 * (int(group['axis'][-1]) - 1)
+                    ax.spines['right'].set_position(('outward', spine_offset))
+                axes[group['axis']] = ax
+            
+            # 设置轴的颜色
+            base_color = group.get('color', colors[color_index % len(colors)])
+            ax.set_ylabel(group['ylabel'], color=base_color)
+            ax.tick_params(axis='y', labelcolor=base_color)
+            
+            # 绘制该组的所有列
+            line_styles = ['-', '--', '-.', ':']
+            for j, column in enumerate(group['columns']):
+                if column in df.columns:
+                    line_style = line_styles[j % len(line_styles)]
+                    ax.plot(df.index, df[column], 
+                           color=base_color, 
+                           linestyle=line_style,
+                           alpha=0.8,
+                           label=column,
+                           linewidth=1.5)
+            
+            color_index += 1
+
+        # 设置主要属性
+        ax1.set_xlabel(X_LABEL)
+        ax1.set_title(f"{config['title']} - {table_name}", fontsize=14, pad=20)
+        ax1.grid(True, alpha=0.3)
+
+        # 创建统一的图例
+        lines_labels = []
+        for ax in fig.axes:
+            lines, labels = ax.get_legend_handles_labels()
+            lines_labels.extend(list(zip(lines, labels)))
+        
+        if lines_labels:
+            lines, labels = zip(*lines_labels)
+            ax1.legend(lines, labels, loc='upper left', bbox_to_anchor=(0, 1), ncol=2)
+
+        # 调整布局以适应多个轴
+        plt.tight_layout()
+
+        # 保存图表
+        output_path = OUTPUT_DIR / config['type'] / f"{table_name}.png"
+        plt.savefig(output_path, bbox_inches='tight', dpi=DPI)
+
+        return {
+            'type': config['type'],
+            'table_name': table_name,
+            'path': output_path
+        }
+
+    except Exception as e:
+        print(f"生成综合图表 for {table_name} 时发生错误: {str(e)}")
+        return None
+    finally:
+        # 确保图形被关闭，即使发生错误
+        if fig is not None:
+            plt.close(fig)
+        else:
+            plt.close('all')  # 关闭所有打开的图形作为备选
+
+
 def main():
     """主函数"""
     print("开始批量生成钻井数据图表...")
@@ -182,30 +285,19 @@ def main():
     # 确保输出目录存在
     ensure_output_dirs()
 
-    # 使用线程池并发处理
+    # 使用单线程顺序处理
     total_charts = 0
     successful_files = 0
 
-    with ThreadPoolExecutor() as executor:
-        # 提交所有任务
-        future_to_file = {
-            executor.submit(process_excel_file, filepath): filepath
-            for filepath in excel_files
-        }
-
-        # 使用tqdm显示进度
-        with tqdm(total=len(excel_files), desc="处理文件进度") as pbar:
-            for future in as_completed(future_to_file):
-                filepath = future_to_file[future]
-                try:
-                    results = future.result()
-                    if results:
-                        successful_files += 1
-                        total_charts += len(results)
-                    pbar.update(1)
-                except Exception as e:
-                    print(f"处理文件 {filepath.name} 时发生异常: {e}")
-                    pbar.update(1)
+    # 使用tqdm显示进度
+    for filepath in tqdm(excel_files, desc="处理文件进度"):
+        try:
+            results = process_excel_file(filepath)
+            if results:
+                successful_files += 1
+                total_charts += len(results)
+        except Exception as e:
+            print(f"处理文件 {filepath.name} 时发生异常: {e}")
 
     print(f"\n处理完成!")
     print(f"成功处理文件: {successful_files}/{len(excel_files)}")
