@@ -23,8 +23,8 @@ import sys
 
 
 # 可配置常量
-INPUT_DIR = Path('./overflow')
-OUTPUT_DIR = Path('./charts/')
+INPUT_DIR = Path('./selected/unsure')
+OUTPUT_DIR = Path('./selected/unsure')
 FIGURE_SIZE = (12, 8)
 DPI = 300
 X_LABEL = '数据点索引'
@@ -54,16 +54,10 @@ CHART_CONFIG = [
                 'axis': 'right2'
             },
             {
-                'columns': ['入口流量(L/s)'],
-                'ylabel': '入口流量 (L/s)',
+                'columns': ['入口流量(L/s)', 'FDT101(L/s)'],
+                'ylabel': '流量（L/s）',
                 'color': 'brown',
                 'axis': 'right5'
-            },
-            {
-                'columns': ['FDT101(L/s)'],
-                'ylabel': '出口流量 (L/s)',
-                'color': 'pink',
-                'axis': 'right6'
             }
         ],
         'title': '综合钻井指标监控',

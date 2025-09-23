@@ -4,9 +4,9 @@
 import pandas as pd
 import os
 
-INPUT_FILE_NAME = 'Rec1909281834.xlsx'
-OUT_PUT_FOLDER = 'overlost'
-ROWS = [(4000,11000)]
+INPUT_FILE_NAME = 'Rec1909061121.xlsx'
+OUT_PUT_FOLDER = 'lost'
+ROWS = [(8000,11000)]
 
 INPUT_FOLDER = 'xlsx'  
 INPUT_FILE = os.path.join(INPUT_FOLDER, INPUT_FILE_NAME)
