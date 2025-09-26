@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+    <meta charset="utf-8" />
+    <title>Overflow 标注工具</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+    <header class="page-header">
+        <h1>Overflow 标注工具</h1>
+        <p class="subtitle">浏览图表、标注溢流 / 漏失区间，并导出结果</p>
+    </header>
+
+    <main class="layout">
+        <section class="panel chart-panel">
+            <div class="panel-header">
+                <h2>图表查看器</h2>
+                <div class="file-navigation">
+                    <button type="button" id="prevFile">上一个文件</button>
+                    <select id="fileSelect"></select>
+                    <button type="button" id="nextFile">下一个文件</button>
+                </div>
+                <div class="file-meta">
+                    <span id="fileName">--</span>
+                    <span id="fileRows">行数: --</span>
+                </div>
+            </div>
+            <div class="chart-container">
+                <img id="chartImage" alt="数据图表" />
+            </div>
+        </section>
+
+        <section class="panel annotation-panel">
+            <div class="panel-header">
+                <h2>创建新事件</h2>
+            </div>
+            <form id="eventForm" class="event-form">
+                <label>
+                    事件类型
+                    <select name="event_type" required>
+                        <option value="overflow">溢流</option>
+                        <option value="lost">漏失</option>
+                    </select>
+                </label>
+                <label>
+                    起始文件
+                    <select name="start_file" required></select>
+                </label>
+                <label>
+                    起始行号
+                    <input name="start_row" type="number" min="1" required />
+                </label>
+                <label>
+                    结束文件
+                    <select name="end_file" required></select>
+                </label>
+                <label>
+                    结束行号
+                    <input name="end_row" type="number" min="1" required />
+                </label>
+                <button type="submit">添加事件</button>
+            </form>
+
+            <div class="panel-header spacing-top">
+                <h2>已标注事件</h2>
+            </div>
+            <div class="event-table-wrapper">
+                <table id="eventsTable">
+                    <thead>
+                        <tr>
+                            <th>类型</th>
+                            <th>起始文件</th>
+                            <th>起始行</th>
+                            <th>结束文件</th>
+                            <th>结束行</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="actions">
+                <button type="button" id="exportBtn">导出标注结果</button>
+            </div>
+            <div id="message" class="message" role="status"></div>
+        </section>
+    </main>
+
+    <script>
+        const state = {
+            files: [],
+            events: [],
+            currentIndex: 0,
+        };
+
+        const dom = {
+            fileSelect: document.getElementById('fileSelect'),
+            startFileSelect: document.querySelector('[name="start_file"]'),
+            endFileSelect: document.querySelector('[name="end_file"]'),
+            chartImage: document.getElementById('chartImage'),
+            fileName: document.getElementById('fileName'),
+            fileRows: document.getElementById('fileRows'),
+            eventsTableBody: document.querySelector('#eventsTable tbody'),
+            message: document.getElementById('message'),
+            prevFile: document.getElementById('prevFile'),
+            nextFile: document.getElementById('nextFile'),
+            exportBtn: document.getElementById('exportBtn'),
+            eventForm: document.getElementById('eventForm'),
+        };
+
+        const selectionState = {
+            start: null,
+            end: null,
+        };
+
+        function getCurrentFile() {
+            return state.files[state.currentIndex] || null;
+        }
+
+        function setSelectToAvailable(select, desiredValue) {
+            if (!select) return '';
+            const options = Array.from(select.options);
+            if (!options.length) {
+                select.value = '';
+                return '';
+            }
+
+            const match = options.find(option => option.value === desiredValue);
+            if (match) {
+                select.value = match.value;
+                return match.value;
+            }
+
+            select.value = options[0].value;
+            return select.value;
+        }
+
+        function applySelectionToState(kind, value) {
+            if (kind === 'start') {
+                selectionState.start = value || null;
+            } else {
+                selectionState.end = value || null;
+            }
+        }
+
+        function prepareSelectFocus(select) {
+            if (!select || select.dataset.temporaryFocus === 'true') {
+                return;
+            }
+
+            const current = getCurrentFile();
+            if (!current) return;
+
+            const currentName = current.name;
+            const options = Array.from(select.options);
+            const hasCurrent = options.some(option => option.value === currentName);
+            if (!hasCurrent) return;
+
+            if (select.value === currentName) {
+                return;
+            }
+
+            select.dataset.originalValue = select.value;
+            select.dataset.temporaryFocus = 'true';
+            select.value = currentName;
+
+            const targetOption = options.find(option => option.value === currentName);
+            if (targetOption && typeof targetOption.scrollIntoView === 'function') {
+                requestAnimationFrame(() => {
+                    targetOption.scrollIntoView({ block: 'nearest' });
+                });
+            }
+        }
+
+        function clearTemporaryFocus(select) {
+            if (!select) return;
+            delete select.dataset.temporaryFocus;
+            delete select.dataset.originalValue;
+        }
+
+        function revertSelectWithoutChange(select, kind) {
+            if (!select || select.dataset.temporaryFocus !== 'true') {
+                return;
+            }
+
+            const originalValue = select.dataset.originalValue;
+            const currentValue = select.value;
+            clearTemporaryFocus(select);
+
+            if (originalValue !== undefined && currentValue !== originalValue) {
+                const value = setSelectToAvailable(select, currentValue);
+                applySelectionToState(kind, value);
+                return;
+            }
+
+            const value = setSelectToAvailable(select, originalValue);
+            applySelectionToState(kind, value);
+        }
+
+        function attachSelectInteractions(select, kind) {
+            if (!select) return;
+
+            select.addEventListener('change', () => {
+                clearTemporaryFocus(select);
+                applySelectionToState(kind, select.value);
+            });
+
+            select.addEventListener('pointerdown', (event) => {
+                if (event.button !== 0) return;
+                prepareSelectFocus(select);
+            });
+
+            select.addEventListener('keydown', (event) => {
+                const shouldOpen =
+                    event.key === 'F4' ||
+                    (event.key === 'ArrowDown' && event.altKey) ||
+                    event.key === 'Enter' ||
+                    event.key === ' ';
+                if (shouldOpen) {
+                    prepareSelectFocus(select);
+                }
+            });
+
+            select.addEventListener('blur', () => {
+                revertSelectWithoutChange(select, kind);
+            });
+        }
+
+        attachSelectInteractions(dom.startFileSelect, 'start');
+        attachSelectInteractions(dom.endFileSelect, 'end');
+
+        function showMessage(text, type = 'info') {
+            dom.message.textContent = text;
+            dom.message.dataset.type = type;
+            if (text) {
+                setTimeout(() => {
+                    dom.message.textContent = '';
+                    dom.message.dataset.type = '';
+                }, 5000);
+            }
+        }
+
+        async function fetchJson(url, options = {}) {
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                let message = response.statusText;
+                try {
+                    const data = await response.clone().json();
+                    message = data?.detail || message;
+                } catch {
+                    try {
+                        const text = await response.text();
+                        if (text) message = text;
+                    } catch {
+                        // ignore
+                    }
+                }
+                throw new Error(message);
+            }
+
+            if (response.status === 204 || response.status === 205) {
+                return null;
+            }
+
+            const text = await response.text();
+            if (!text) return null;
+
+            try {
+                return JSON.parse(text);
+            } catch {
+                return null;
+            }
+        }
+
+        function populateFileSelects() {
+            const options = state.files.map(file => `<option value="${file.name}">${file.name}</option>`).join('');
+            dom.fileSelect.innerHTML = options;
+            dom.startFileSelect.innerHTML = options;
+            dom.endFileSelect.innerHTML = options;
+
+            if (!state.files.length) {
+                dom.fileSelect.value = '';
+                dom.startFileSelect.value = '';
+                dom.endFileSelect.value = '';
+                selectionState.start = null;
+                selectionState.end = null;
+                return;
+            }
+
+            const current = getCurrentFile() || state.files[0];
+            const currentName = current ? current.name : '';
+            dom.fileSelect.value = currentName;
+
+            const desiredStart = selectionState.start ?? currentName;
+            const desiredEnd = selectionState.end ?? currentName;
+
+            const resolvedStart = setSelectToAvailable(dom.startFileSelect, desiredStart);
+            const resolvedEnd = setSelectToAvailable(dom.endFileSelect, desiredEnd);
+
+            applySelectionToState('start', resolvedStart);
+            applySelectionToState('end', resolvedEnd);
+        }
+
+        function updateChart() {
+            if (!state.files.length) {
+                dom.chartImage.src = '';
+                dom.fileName.textContent = '--';
+                dom.fileRows.textContent = '行数: --';
+                return;
+            }
+
+            const file = state.files[state.currentIndex];
+            dom.fileSelect.value = file.name;
+            dom.fileName.textContent = file.name;
+            dom.fileRows.textContent = `行数: ${file.row_count.toLocaleString()}`;
+            dom.chartImage.src = `${file.chart_path}?t=${Date.now()}`;
+
+            if (selectionState.start !== null) {
+                const value = setSelectToAvailable(dom.startFileSelect, selectionState.start);
+                applySelectionToState('start', value);
+            }
+
+            if (selectionState.end !== null) {
+                const value = setSelectToAvailable(dom.endFileSelect, selectionState.end);
+                applySelectionToState('end', value);
+            }
+        }
+
+        function updateEventTable() {
+            dom.eventsTableBody.innerHTML = state.events.map(event => `
+                <tr>
+                    <td>
+                        <select class="event-type-select" data-id="${event.id}" data-current="${event.event_type}">
+                            <option value="overflow" ${event.event_type === 'overflow' ? 'selected' : ''}>溢流</option>
+                            <option value="lost" ${event.event_type === 'lost' ? 'selected' : ''}>漏失</option>
+                        </select>
+                    </td>
+                    <td>${event.start_file}</td>
+                    <td>${event.start_row}</td>
+                    <td>${event.end_file}</td>
+                    <td>${event.end_row}</td>
+                    <td><button type="button" data-id="${event.id}" class="delete-btn">删除</button></td>
+                </tr>
+            `).join('');
+        }
+
+        async function loadFiles() {
+            try {
+                const data = await fetchJson('/api/files');
+                state.files = data.files || [];
+                state.currentIndex = Math.min(state.currentIndex, state.files.length - 1);
+                if (state.currentIndex < 0) state.currentIndex = 0;
+                populateFileSelects();
+                updateChart();
+            } catch (error) {
+                showMessage(`加载文件列表失败：${error.message}`, 'error');
+            }
+        }
+
+        async function loadEvents() {
+            try {
+                const data = await fetchJson('/api/events');
+                state.events = data.events || [];
+                updateEventTable();
+            } catch (error) {
+                showMessage(`加载事件失败：${error.message}`, 'error');
+            }
+        }
+
+        dom.fileSelect.addEventListener('change', (event) => {
+            const selectedName = event.target.value;
+            const index = state.files.findIndex(file => file.name === selectedName);
+            if (index !== -1) {
+                state.currentIndex = index;
+                updateChart();
+            }
+        });
+
+        dom.prevFile.addEventListener('click', () => {
+            if (!state.files.length) return;
+            state.currentIndex = (state.currentIndex - 1 + state.files.length) % state.files.length;
+            updateChart();
+        });
+
+        dom.nextFile.addEventListener('click', () => {
+            if (!state.files.length) return;
+            state.currentIndex = (state.currentIndex + 1) % state.files.length;
+            updateChart();
+        });
+
+        dom.eventForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const formData = new FormData(dom.eventForm);
+            const payload = Object.fromEntries(formData.entries());
+            payload.start_row = Number(payload.start_row);
+            payload.end_row = Number(payload.end_row);
+
+            try {
+                await fetchJson('/api/events', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+                dom.eventForm.reset();
+                const current = getCurrentFile();
+                if (current) {
+                    const startValue = setSelectToAvailable(dom.startFileSelect, current.name);
+                    const endValue = setSelectToAvailable(dom.endFileSelect, current.name);
+                    applySelectionToState('start', startValue);
+                    applySelectionToState('end', endValue);
+                }
+                await loadEvents();
+                showMessage('事件已添加', 'success');
+            } catch (error) {
+                showMessage(`添加事件失败：${error.message}`, 'error');
+            }
+        });
+
+        dom.eventsTableBody.addEventListener('click', async (event) => {
+            if (event.target.matches('.delete-btn')) {
+                const id = event.target.dataset.id;
+                try {
+                    await fetchJson(`/api/events/${id}`, { method: 'DELETE' });
+                    await loadEvents();
+                    showMessage('事件已删除', 'success');
+                } catch (error) {
+                    showMessage(`删除事件失败：${error.message}`, 'error');
+                }
+            }
+        });
+
+        dom.eventsTableBody.addEventListener('change', async (event) => {
+            if (event.target.matches('.event-type-select')) {
+                const select = event.target;
+                const previous = select.dataset.current;
+                const nextValue = select.value;
+                const id = select.dataset.id;
+
+                if (nextValue === previous) {
+                    return;
+                }
+
+                try {
+                    await fetchJson(`/api/events/${id}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ event_type: nextValue }),
+                    });
+                    select.dataset.current = nextValue;
+                    await loadEvents();
+                    showMessage('事件类型已更新', 'success');
+                } catch (error) {
+                    select.value = previous;
+                    showMessage(`更新事件类型失败：${error.message}`, 'error');
+                }
+            }
+        });
+
+        dom.exportBtn.addEventListener('click', async () => {
+            try {
+                const data = await fetchJson('/api/export', { method: 'POST' });
+                if (data.exported && data.exported.length) {
+                    showMessage(`已导出 ${data.exported.length} 个文件`, 'success');
+                } else {
+                    showMessage('没有需要导出的标注数据', 'info');
+                }
+            } catch (error) {
+                showMessage(`导出失败：${error.message}`, 'error');
+            }
+        });
+
+        loadFiles().then(loadEvents);
+    </script>
+</body>
+</html>
