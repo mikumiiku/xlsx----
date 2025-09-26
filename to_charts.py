@@ -24,8 +24,8 @@ import warnings
 
 
 # 可配置常量
-INPUT_DIR = Path('./csv')
-OUTPUT_DIR = Path('./charts/')
+INPUT_DIR = Path('./marked/')
+OUTPUT_DIR = Path('./marked/')
 FIGURE_SIZE = (12, 8)
 DPI = 300
 X_LABEL = '数据点索引'

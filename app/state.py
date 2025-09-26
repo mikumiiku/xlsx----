@@ -6,10 +6,8 @@ from pathlib import Path
 from typing import Dict, List
 from uuid import uuid4
 
-import matplotlib.pyplot as plt
 import pandas as pd
 
-from .charting import ChartGenerationResult, detect_encoding, generate_chart_from_csv
 from .models import CSVFileInfo, EventRecord, EventType
 
 
@@ -63,12 +61,6 @@ class AnnotationManager:
             row_count = self._count_rows(path)
 
             chart_path, chart_relative_path = self._resolve_chart_path(path)
-            if chart_path is None:
-                chart_path, chart_relative_path, row_count, encoding = self._generate_chart_placeholder(
-                    path,
-                    row_count,
-                    encoding,
-                )
 
             files.append(
                 CSVFileInfo(
@@ -98,10 +90,7 @@ class AnnotationManager:
             json.dump([event.to_dict() for event in self._events], fh, ensure_ascii=False, indent=2)
 
     def _detect_encoding_with_fallback(self, file_path: Path) -> str:
-        try:
-            return detect_encoding(file_path)
-        except Exception:  # pragma: no cover - fallback
-            return "utf-8"
+        return "utf-8"
 
     def _resolve_chart_path(self, csv_path: Path) -> tuple[Path | None, str]:
         if self.chart_subdir:
@@ -112,29 +101,6 @@ class AnnotationManager:
         if absolute.exists():
             return absolute, relative.as_posix()
         return None, relative.as_posix()
-
-    def _generate_chart_placeholder(
-        self,
-        csv_path: Path,
-        row_count: int,
-        encoding: str,
-    ) -> tuple[Path, str, int, str]:
-        output_dir = self.chart_dir / "_generated"
-        output_path = output_dir / f"{csv_path.stem}.png"
-        try:
-            chart_result: ChartGenerationResult = generate_chart_from_csv(
-                csv_path,
-                output_path,
-                sample_points=self.max_chart_points,
-                chunk_size=self.chart_chunk_size,
-            )
-            row_count = chart_result.row_count
-            encoding = chart_result.encoding
-        except Exception as exc:  # pragma: no cover - defensive
-            self._create_error_chart(output_path, csv_path.name, str(exc))
-
-        relative = output_path.relative_to(self.chart_dir).as_posix()
-        return output_path, relative, row_count, encoding
 
     # ------------------------------------------------------------------
     # Public accessors
@@ -218,7 +184,17 @@ class AnnotationManager:
                 if not ranges:
                     continue
 
-                df = pd.read_csv(info.path, encoding=info.encoding)
+                # Try multiple encodings to read the CSV file
+                df = None
+                encodings = ['utf-8', 'gbk', 'gb2312', 'latin-1']
+                for encoding in encodings:
+                    try:
+                        df = pd.read_csv(info.path, encoding=encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if df is None:
+                    raise RuntimeError(f"无法读取文件 {info.name}，尝试了多种编码均失败")
                 if df.empty:
                     continue
 
@@ -328,14 +304,3 @@ class AnnotationManager:
         with file_path.open("r", encoding="utf-8", errors="ignore") as fh:
             total = sum(1 for _ in fh)
         return max(total - 1, 0)
-
-    @staticmethod
-    def _create_error_chart(chart_path: Path, title: str, message: str) -> None:  # pragma: no cover - fallback
-        chart_path.parent.mkdir(parents=True, exist_ok=True)
-        fig, ax = plt.subplots(figsize=(12, 4), dpi=120)
-        ax.text(0.5, 0.6, title, ha="center", va="center", fontsize=14, fontweight="bold")
-        ax.text(0.5, 0.4, message, ha="center", va="center", fontsize=11, wrap=True)
-        ax.axis("off")
-        fig.tight_layout()
-        fig.savefig(chart_path, bbox_inches="tight")
-        plt.close(fig)
